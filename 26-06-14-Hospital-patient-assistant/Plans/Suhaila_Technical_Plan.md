@@ -276,8 +276,34 @@ RESPONSE FORMAT (JSON):
 - All external webhooks: signed + idempotent.
 
 ## 9. Security and Compliance Architecture
+| CONTROL	| IMPLEMENTATION | 
+| ----------| ----------|
+| Encryption at rest |	Postgres TDE, encrypted vector store | 
+| Encryption in transit	| TLS 1.3 everywhere | 
+| Auth (patient)	| Phone OTP, 5-min TTL | 
+| Auth (staff)	| OAuth 2.0 via hospital SSO | 
+| Auth (service-to-service)	| mTLS or signed JWTs | 
+| Authorization	| RBAC: patient sees own data only, staff sees assigned only | 
+| Consent capture	| At first contact, stored inconsent_records, revocable | 
+| Right to access	| Self-service API:GET /patients/{id}/export | 
+| Right to delete	| Soft delete + scheduled hard delete (legal hold aware) | 
+| Audit log	| Append-only, hash-chained, 5-year retention | 
+| PII in logs	| Redacted; raw text only in encrypted audit table | 
+| Secret management	| Environment variables via Doppler / Vault (not in code) | 
+| DPIA	| Document maintained in repo, versioned | 
+| Penetration testing	| Pre-pilot (even a basic one) | 
+
 
 ## 10. Observability
+| LAYER	| TOOL	| CAPTURES| 
+| ---------    | ---------  | --------- |
+| Agent traces | LangSmith	| Every LLM call, tool call, decision	| 
+| App logs	| Structured JSON → OpenTelemetry → Grafana		| All HTTP, errors, latency	| 
+| Metrics 	| 	Prometheus + Grafana dashboards		| AHT, FCR, latency, error rate, cost per interaction	| 
+| Audit		| Postgres + signed export		| Compliance, legal, incident response	| 
+| User feedback		| Post-interaction CSAT prompt		| atient satisfaction, regression detection	| 
+| Eval suite		| Ragas + custom		| Triage accuracy, RAG groundedness, agent behavior	| 
+
 ### 10.1 Trace Example (per interaction)
 ```python
 [14:32:01] Intake      -> channel=voice, lang=ar-EG
