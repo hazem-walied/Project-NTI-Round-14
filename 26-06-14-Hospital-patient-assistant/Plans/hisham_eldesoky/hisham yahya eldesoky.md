@@ -602,3 +602,15 @@ Live Interactions ──► HITL Decisions ──► Re-labeling Queue    │
 5. **Triage isolation** — Agent 2 is kept separate from Agent 1 so it can be independently validated and replaced without touching routing.
 6. **HITL as a full agent** — Agent 7 is not a passive pause. It tracks decisions, collects override feedback, and feeds disagreements back into the evaluation pipeline.
 7. **Everything is measured** — routing accuracy, triage sensitivity, grounding attribution, scheduling reliability, drug recall, PLI/CAS validity, engagement rate, and analytics AUC all have explicit targets and a continuous evaluation loop.
+
+---
+
+## 12. Clarifications & Scope Decisions (Spec Kit Clarify)
+
+Following the specification clarification step, the following architectural and scope decisions have been finalized:
+
+1. **LLM & NLP Backend (Hybrid Approach):** A hybrid model architecture is used. Complex reasoning, Clinical DSS (Agent 5), and verification tasks are routed to a powerful multilingual LLM (e.g., Gemini 1.5 Pro or GPT-4o). Local dialect understanding, AraBERT/CAMeL Tools, and lightweight classification are utilized for Egyptian dialect processing.
+2. **HIS & EMR Integration Level:** A fully-featured, realistic mock database using PostgreSQL and Neo4j is built to simulate patient EMR records, drug interactions, and doctor slot availability, rather than integrating with live/staging production HIS APIs in the first 3 weeks.
+3. **Channel Scope:** The Arabic Voice/IVR channel is officially out of scope for the 3-week MVP. The platform focuses exclusively on the WhatsApp (text-based) interface and the clinician-facing web dashboard.
+4. **Clinical DSS Reference Source:** The clinical decision support and contraindications checking (Agent 5) uses a curated Neo4j graph covering a specific, predefined set of high-risk clinical scenarios (such as Warfarin + Ibuprofen) for demonstration purposes.
+
