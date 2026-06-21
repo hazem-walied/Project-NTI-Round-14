@@ -168,6 +168,180 @@ class Agent:
 | Communication	| Speak and send messages	send_sms, make_call, tts_speak	| Session (R/W)| 
 | Escalation| 	Page clinician, hand off	page_clinician, open_voice_bridge, send_summary	| Session (R), audit (W)| 
 
+#### 5.2.1 Agent Input / Output 
+This is the contract each agent implements. It will be put intodocs/agent-contracts.md in the repo. It is the source of truth for what goes in, what comes out, and what gets persisted.
+
+**0. The Shared State (What Every Agent Reads & Writes)** Every agent operates on the sameSessionState object passed by the orchestrator.
+```python
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
+from datetime import datetime
+
+Channel = Literal["voice", "chat", "sms"]
+Language = Literal["ar-EG", "ar-MSA", "en"]
+Band = Literal["green", "yellow", "orange", "red"]
+
+class Message(BaseModel):
+    role: Literal["user", "assistant", "system", "tool"]
+    content: str
+    ts: datetime
+    agent: Optional[str] = None      # which agent produced it
+    tool_call_id: Optional[str] = None
+
+class PatientRef(BaseModel):
+    patient_id: Optional[str] = None   # null for new patients
+    phone: Optional[str] = None
+    name: Optional[str] = None
+    language: Language = "ar-EG"
+    consent_granted: bool = False
+    consent_scope: list[str] = []       # ["clinical", "scheduling", ...]
+
+class SessionState(BaseModel):
+    # Identity & session
+    session_id: str
+    channel: Channel
+    started_at: datetime
+    patient: PatientRef
+
+    # Conversation
+    messages: list[Message] = []
+
+    # Working memory (each agent reads/writes its own slice)
+    triage: Optional["TriageOutput"] = None
+    history: Optional["HistoryOutput"] = None
+    scheduling: Optional["SchedulingOutput"] = None
+    escalation: Optional["EscalationOutput"] = None
+
+    # Routing control
+    current_step: Literal[
+        "intake", "identify", "consent", "triage",
+        "schedule", "escalate", "confirm", "followup", "end"
+    ] = "intake"
+    next_agent: Optional[str] = None
+    end_session: bool = False
+
+    # Observability
+    trace: list[dict] = []              # append-only agent decisions
+```
+**1. Orchestrator
+1.1 Input**
+|  FIELD | 	SOURCE |
+| ---------|---------|
+| SessionState (current)	| In-memory, from previous step| 
+| New user message	| Channel adapter (voice ASR or chat)| 
+
+**1.2 Output**
+|  FIELD	|  EFFECT |
+| ---------|---------|
+|  next_agent	|  Name of the next agent to invoke (triage,history, etc.) orNone |
+|  current_step	|  New state in the state machine |
+|  messages (append)	|  Adds system / clarifying question to user |
+|  end_session	|  True if session should close |
+|  trace (append)	|  One entry per routing decision |
+
+**Tools Available**
+-route_to_agent(agent_name: str, reason: str)
+-ask_user(question: str, language: str)
+-end_session(reason: str)
+
+**Example**
+```python
+# Input state
+state.next_agent == None
+state.messages[-1].content == "I have chest pain"
+
+# Orchestrator decision
+state.next_agent = "history"
+state.current_step = "identify"
+state.trace.append({"agent":"orch","decision":"route_to_history","reason":"load profile before triage"})
+```
+**2. History Agent
+2.1 Input**
+| FIELD	TYPE	| REQUIRED| 	NOTES| 
+| ---------|---------|---------|
+| patient.phone	| string	| yes (one of three)	| Used to look up returning patient| 
+| patient.name	| string	| no	| Helpful if phone not on file| 
+| patient.patient_id	| string	| no	| Direct lookup if known| 
+| action	| enum	| yes	| get_profile,update_profile,search_episodes,add_episode| 
+| update_payload| 	object	| conditional	| Required ifaction == update_profile| 
+| search_query	| string	| conditional	| Required ifaction == search_episodes| 
+| episode_summary	| string	| conditional	| Required ifaction == add_episode| 
+   
+**2.2 Output**
+```python
+class HistoryOutput(BaseModel):
+    found: bool
+    patient_id: Optional[str] = None
+    name: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[Literal["M", "F"]] = None
+    language: Language = "ar-EG"
+
+    # Clinical summary
+    conditions: list[str] = []          # ["hypertension", "type-2 diabetes"]
+    allergies: list[str] = []
+    medications: list[str] = []
+    prior_visits: int = 0
+    last_visit_date: Optional[datetime] = None
+
+    # Episodic memory (from vector search)
+    similar_episodes: list[dict] = []   # [{episode_id, date, summary, score}]
+    is_returning: bool = False
+
+    # For audit
+    sources: list[str] = []             # chunk_ids retrieved
+    confidence: float = 1.0
+```
+
+**Tools Available**
+-lookup_patient(phone | name | patient_id) -> PatientRecord
+-search_episodes(patient_id, query, top_k=5) -> list[Episode]
+-update_profile(patient_id, fields) -> PatientRecord
+-add_episode(patient_id, summary, embedding) -> Episode
+
+**Side Effects**
+- Read:patient_db,patient_episodes vector store
+- Write:patient_db (only ifupdate_profile),audit_log
+- Append to:state.history,state.patient,state.trace
+
+**Validation Rules**
+-consent_granted == True required before any read of clinical data
+Phone format: Egyptian mobile (^01[0125]\d{8}$) or international
+-update_profile allowed fields whitelist: name, language, contact preferences only (not clinical fields)
+
+**Error Cases** (To be Added)
+
+3. Triage Agent
+3.1 Input
+3.2 Output
+
+4. Scheduling Agent
+4.1 Input
+4.2 Output
+   
+5. Communication Agent
+5.1 Input
+5.2 Output
+
+6. Escalation Agent
+6.1 Input
+6.2 Output
+
+**Cross-Agent Data Flow**
+```mermaid
+flowchart LR
+    A[User message] --> O[Orchestrator]
+    O -->|route| H[History Agent]
+    H -->|profile| T[Triage Agent]
+    T -->|band + urgency| S{Decision}
+    S -->|green/yellow| SCH[Scheduling Agent]
+    S -->|orange/red| E[Escalation Agent]
+    SCH -->|slot booked| C[Communication Agent]
+    E -->|page sent| C
+    C -->|confirmation sent| U[User]
+    C -->|end| O
+```
+
 ### 5.3 Orchestrator State Machine
 ```mermaid
 stateDiagram-v2
